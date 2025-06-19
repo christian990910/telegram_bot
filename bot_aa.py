@@ -3,14 +3,15 @@ import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, MenuButtonCommands, BotCommand, BotCommandScopeDefault
 from telegram.ext import (ApplicationBuilder, CommandHandler, CallbackQueryHandler,
                           MessageHandler, ContextTypes, filters, ConversationHandler)
+
 # 初始化日志
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 # Bot 配置
-TOKEN = "7535253577:AAEfChOGkCjD9hF7PkMWQ43eO-2gxeOf1VM"  # 替换为你的 Bot Token
-USDT_ADDRESS = "TSsNMAvZrEdJMxdV6rkT4Sb4c7C1uJvmaY"  # 替换为你的 USDT 钱包地址
+TOKEN = "7535253577:AAEfChOGkCjD9hF7PkMWQ43eO-2gxeOf1VM"
+USDT_ADDRESS = "TSsNMAvZrEdJMxdV6rkT4Sb4c7C1uJvmaY"
 
-# 内存存储（可替换为数据库）
+# 内存存储
 user_points = {}  # {user_id: points}
 user_random_code = {}  # {user_id: code}
 
@@ -28,16 +29,12 @@ async def set_menu_button(application):
         BotCommand("help", "帮助信息"),
         BotCommand("sign_in", "签到"),
         BotCommand("check_points", "查询积分"),
+        BotCommand("buy_points", "购买积分"),
     ]
 
-    # 设置全局命令
-    await application.bot.set_my_commands(
-        commands=commands,
-        scope=BotCommandScopeDefault()
-    )
-
-    # 设置左下角菜单按钮（必须是实例！）
+    await application.bot.set_my_commands(commands=commands, scope=BotCommandScopeDefault())
     await application.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+
 # 启动命令
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
@@ -106,7 +103,7 @@ async def handle_purchase_amount(update: Update, context: ContextTypes.DEFAULT_T
     try:
         amount = int(update.message.text.strip())
         context.user_data['purchase_amount'] = amount
-        price = amount * 0.1  # 每积分0.1 USDT
+        price = amount * 0.1
         await update.message.reply_text(
             f"你要购买 {amount} 积分，总价为 {price:.2f} USDT。\n"
             "确认购买请回复 `确认`，否则回复 `取消`。",
@@ -117,7 +114,7 @@ async def handle_purchase_amount(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text("请输入有效的数字。")
         return AWAIT_PURCHASE_AMOUNT
 
-# 确认购买并提供收款地址
+# 确认购买
 async def handle_purchase_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     if text == "确认":
@@ -152,9 +149,7 @@ async def add_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except ValueError:
         await update.message.reply_text("参数错误，请输入有效的用户ID和数量。")
 
-# ...（前面的导入和配置不变）
-
-# 新增命令处理函数
+# 新增帮助命令
 async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("""
 ✅ 签到：系统给出验证码，输入正确即可获得积分。
@@ -162,22 +157,6 @@ async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 🏆 查询排名：查看排行榜前十。
 💰 购买积分：通过USDT支付购买。
 """)
-
-async def handle_sign_in(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    code = generate_code()
-    user_random_code[user_id] = code
-    await update.message.reply_text(f"请输入以下验证码完成签到：\n\n`{code}`", parse_mode='Markdown')
-    return AWAIT_CODE
-
-async def handle_check_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    points = user_points.get(user_id, 0)
-    await update.message.reply_text(f"你当前的积分为：{points}")
-
-async def handle_buy_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("请输入你要购买的积分数量（例如 100）：")
-    return AWAIT_PURCHASE_AMOUNT
 
 # 主函数
 def main():
@@ -196,14 +175,12 @@ def main():
         ]
     )
 
-    # 注册所有命令
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", handle_help))
-    app.add_handler(CommandHandler("sign_in", handle_sign_in))
-    app.add_handler(CommandHandler("check_points", handle_check_points))
-    app.add_handler(CommandHandler("buy_points", handle_buy_points))
+    app.add_handler(CommandHandler("sign_in", sign_in))
+    app.add_handler(CommandHandler("check_points", check_points))
+    app.add_handler(CommandHandler("buy_points", buy_points))
     app.add_handler(conv_handler)
-
     # 设置菜单按钮（仅视觉）
     app.job_queue.run_once(set_menu_button, 1)
 
