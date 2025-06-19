@@ -1,12 +1,12 @@
 import random
 import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, MenuButtonCommands, BotCommand, BotCommandScopeDefault
 from telegram.ext import (ApplicationBuilder, CommandHandler, CallbackQueryHandler,
                           MessageHandler, ContextTypes, filters, ConversationHandler)
-
 # 初始化日志
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
+# Bot 配置
 TOKEN = "7535253577:AAEfChOGkCjD9hF7PkMWQ43eO-2gxeOf1VM"  # 替换为你的 Bot Token
 USDT_ADDRESS = "TSsNMAvZrEdJMxdV6rkT4Sb4c7C1uJvmaY"  # 替换为你的 USDT 钱包地址
 
@@ -21,6 +21,23 @@ AWAIT_CODE, AWAIT_PURCHASE_AMOUNT, AWAIT_CONFIRM_PURCHASE = range(3)
 def generate_code():
     return str(random.randint(1000, 9999))
 
+# 设置左下角菜单按钮（仅视觉效果）
+async def set_menu_button(application):
+    commands = [
+        BotCommand("start", "启动 Bot"),
+        BotCommand("help", "帮助信息"),
+        BotCommand("sign_in", "签到"),
+        BotCommand("check_points", "查询积分"),
+    ]
+
+    # 设置全局命令
+    await application.bot.set_my_commands(
+        commands=commands,
+        scope=BotCommandScopeDefault()
+    )
+
+    # 设置左下角菜单按钮（必须是实例！）
+    await application.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
 # 启动命令
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
@@ -103,7 +120,6 @@ async def handle_purchase_amount(update: Update, context: ContextTypes.DEFAULT_T
 # 确认购买并提供收款地址
 async def handle_purchase_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
-    # 在 handle_purchase_confirmation 中移除自动加积分部分
     if text == "确认":
         amount = context.user_data.get('purchase_amount', 0)
         price = amount * 0.1
@@ -112,7 +128,7 @@ async def handle_purchase_confirmation(update: Update, context: ContextTypes.DEF
             f"请将 USDT 发送到以下地址：\n\n`{USDT_ADDRESS}`\n\n"
             "付款完成后请联系管理员确认。",
             parse_mode='Markdown'
-    )
+        )
     else:
         await update.message.reply_text("已取消购买。")
     return ConversationHandler.END
@@ -121,6 +137,47 @@ async def handle_purchase_confirmation(update: Update, context: ContextTypes.DEF
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("操作已取消。")
     return ConversationHandler.END
+
+# 管理员加积分命令
+async def add_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args or len(context.args) != 2:
+        await update.message.reply_text("用法：/addpoints <user_id> <amount>")
+        return
+
+    try:
+        user_id = int(context.args[0])
+        amount = int(context.args[1])
+        user_points[user_id] = user_points.get(user_id, 0) + amount
+        await update.message.reply_text(f"✅ 已为用户 {user_id} 添加 {amount} 积分。")
+    except ValueError:
+        await update.message.reply_text("参数错误，请输入有效的用户ID和数量。")
+
+# ...（前面的导入和配置不变）
+
+# 新增命令处理函数
+async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("""
+✅ 签到：系统给出验证码，输入正确即可获得积分。
+📊 查询积分：查看你目前的积分。
+🏆 查询排名：查看排行榜前十。
+💰 购买积分：通过USDT支付购买。
+""")
+
+async def handle_sign_in(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    code = generate_code()
+    user_random_code[user_id] = code
+    await update.message.reply_text(f"请输入以下验证码完成签到：\n\n`{code}`", parse_mode='Markdown')
+    return AWAIT_CODE
+
+async def handle_check_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    points = user_points.get(user_id, 0)
+    await update.message.reply_text(f"你当前的积分为：{points}")
+
+async def handle_buy_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("请输入你要购买的积分数量（例如 100）：")
+    return AWAIT_PURCHASE_AMOUNT
 
 # 主函数
 def main():
@@ -133,13 +190,24 @@ def main():
             AWAIT_PURCHASE_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_purchase_amount)],
             AWAIT_CONFIRM_PURCHASE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_purchase_confirmation)],
         },
-        fallbacks=[CommandHandler("cancel", cancel)]
+        fallbacks=[
+            CommandHandler("cancel", cancel),
+            CommandHandler("addpoints", add_points)
+        ]
     )
 
+    # 注册所有命令
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", handle_help))
+    app.add_handler(CommandHandler("sign_in", handle_sign_in))
+    app.add_handler(CommandHandler("check_points", handle_check_points))
+    app.add_handler(CommandHandler("buy_points", handle_buy_points))
     app.add_handler(conv_handler)
 
-    print("Bot 正在运行...")
+    # 设置菜单按钮（仅视觉）
+    app.job_queue.run_once(set_menu_button, 1)
+
+    print("✅ Bot 正在运行...")
     app.run_polling()
 
 if __name__ == '__main__':
