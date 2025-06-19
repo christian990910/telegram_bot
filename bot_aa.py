@@ -3,27 +3,25 @@ import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (ApplicationBuilder, CommandHandler, CallbackQueryHandler,
                           MessageHandler, ContextTypes, filters, ConversationHandler)
-import pytz
-from telegram.ext._jobqueue import JobQueue
 
 # 初始化日志
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-TOKEN = "7535253577:AAEfChOGkCjD9hF7PkMWQ43eO-2gxeOf1VM"
-USDT_ADDRESS = "YOUR_USDT_WALLET_ADDRESS"
+TOKEN = "7535253577:AAEfChOGkCjD9hF7PkMWQ43eO-2gxeOf1VM"  # 替换为你的 Bot Token
+USDT_ADDRESS = "TSsNMAvZrEdJMxdV6rkT4Sb4c7C1uJvmaY"  # 替换为你的 USDT 钱包地址
 
-# 简单内存积分存储（可替换为数据库）
-user_points = {}
-user_random_code = {}
+# 内存存储（可替换为数据库）
+user_points = {}  # {user_id: points}
+user_random_code = {}  # {user_id: code}
 
-# 状态
+# 状态定义
 AWAIT_CODE, AWAIT_PURCHASE_AMOUNT, AWAIT_CONFIRM_PURCHASE = range(3)
 
-# 签到生成随机数
+# 生成四位数验证码
 def generate_code():
     return str(random.randint(1000, 9999))
 
-# 菜单
+# 启动命令
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("✅ 签到", callback_data="sign_in")],
@@ -35,7 +33,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text("请选择操作：", reply_markup=reply_markup)
 
-# 回调处理器
+# 回调处理
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -55,7 +53,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sorted_users = sorted(user_points.items(), key=lambda x: x[1], reverse=True)
         message = "🏆 当前积分排名：\n"
         for i, (uid, pts) in enumerate(sorted_users[:10], 1):
-            name = context.bot.get_chat(uid).username or f"用户{uid}"
+            name = query.from_user.username or f"用户{uid}"
             message += f"{i}. {name} - {pts}分\n"
         await query.message.reply_text(message)
 
@@ -73,7 +71,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     return ConversationHandler.END
 
-# 签到验证码输入处理
+# 验证码验证
 async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     input_code = update.message.text.strip()
@@ -86,7 +84,7 @@ async def verify_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ 验证码错误，签到失败。")
     return ConversationHandler.END
 
-# 处理购买积分输入
+# 处理购买数量输入
 async def handle_purchase_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         amount = int(update.message.text.strip())
@@ -102,32 +100,32 @@ async def handle_purchase_amount(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text("请输入有效的数字。")
         return AWAIT_PURCHASE_AMOUNT
 
-# 确认购买
+# 确认购买并提供收款地址
 async def handle_purchase_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
+    # 在 handle_purchase_confirmation 中移除自动加积分部分
     if text == "确认":
         amount = context.user_data.get('purchase_amount', 0)
         price = amount * 0.1
         await update.message.reply_text(
-            f"请将 {price:.2f} USDT 转入以下地址，付款成功后管理员会为你加积分：\n\n`{USDT_ADDRESS}`",
-            parse_mode='Markdown')
+            f"你要购买 {amount} 积分，总价为 {price:.2f} USDT。\n"
+            f"请将 USDT 发送到以下地址：\n\n`{USDT_ADDRESS}`\n\n"
+            "付款完成后请联系管理员确认。",
+            parse_mode='Markdown'
+    )
     else:
         await update.message.reply_text("已取消购买。")
     return ConversationHandler.END
 
-# 取消处理
+# 取消操作
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("操作已取消。")
     return ConversationHandler.END
 
 # 主函数
 def main():
-    
+    app = ApplicationBuilder().token(TOKEN).build()
 
-    
-    app = ApplicationBuilder().token(TOKEN).job_queue(JobQueue).build()
-
-    # 会话控制器
     conv_handler = ConversationHandler(
         entry_points=[CallbackQueryHandler(handle_callback)],
         states={
@@ -141,6 +139,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(conv_handler)
 
+    print("Bot 正在运行...")
     app.run_polling()
 
 if __name__ == '__main__':
