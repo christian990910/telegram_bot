@@ -16,10 +16,10 @@ USDT_ADDRESS = "TSsNMAvZrEdJMxdV6rkT4Sb4c7C1uJvmaY"
 
 # 数据库配置
 DB_CONFIG = {
-    'host': 'localhost',
-    'database': 'telegram_bot',
+    'host': '115.29.213.131',
+    'database': 'dash-fastapi',
     'user': 'root',
-    'password': 'your_password',  # 请修改为您的MySQL密码
+    'password': 'RP$zk34ns#d',  # 请修改为您的MySQL密码
     'charset': 'utf8mb4',
     'autocommit': True
 }
