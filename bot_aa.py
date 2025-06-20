@@ -14,6 +14,17 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 TOKEN = "7535253577:AAEfChOGkCjD9hF7PkMWQ43eO-2gxeOf1VM"
 USDT_ADDRESS = "TSsNMAvZrEdJMxdV6rkT4Sb4c7C1uJvmaY"
 
+# 管理员配置
+ADMIN_IDS = [
+       # 请替换为您的用户ID
+    1469613013,    # 可以添加多个管理员ID
+    # 添加更多管理员ID...
+]
+
+# 超级管理员（只有超级管理员可以添加/删除其他管理员）
+SUPER_ADMIN_ID = 1469613013  # 请替换为您的用户ID
+
+
 # 数据库配置
 DB_CONFIG = {
     'host': '115.29.213.131',
@@ -87,9 +98,27 @@ def init_database():
         )
         """
         
+        # 创建管理员表
+        create_admin_table = """
+        CREATE TABLE IF NOT EXISTS admins (
+            user_id BIGINT PRIMARY KEY,
+            added_by BIGINT,
+            added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(user_id),
+            FOREIGN KEY (added_by) REFERENCES users(user_id)
+        )
+        """
+        
         cursor.execute(create_users_table)
         cursor.execute(create_sign_in_table)
         cursor.execute(create_purchase_table)
+        cursor.execute(create_admin_table)
+        
+        # 初始化超级管理员
+        cursor.execute("""
+            INSERT IGNORE INTO admins (user_id, added_by)
+            VALUES (%s, %s)
+        """, (SUPER_ADMIN_ID, SUPER_ADMIN_ID))
         
         logging.info("数据库表初始化成功")
         return True
@@ -192,6 +221,124 @@ class UserDatabase:
             if connection.is_connected():
                 cursor.close()
                 connection.close()
+
+# 权限检查函数
+def is_admin(user_id):
+    """检查用户是否为管理员（包括配置文件中的管理员和数据库中的管理员）"""
+    # 检查配置文件中的管理员
+    if user_id in ADMIN_IDS:
+        return True
+    
+    # 检查数据库中的管理员
+    connection = get_db_connection()
+    if connection is None:
+        return False
+        
+    try:
+        cursor = connection.cursor()
+        cursor.execute("SELECT COUNT(*) FROM admins WHERE user_id = %s", (user_id,))
+        result = cursor.fetchone()
+        return result[0] > 0
+        
+    except Error as e:
+        logging.error(f"检查管理员权限错误: {e}")
+        return False
+    finally:
+        if connection.is_connected():
+            cursor.close()
+            connection.close()
+
+def is_super_admin(user_id):
+    """检查用户是否为超级管理员"""
+    return user_id == SUPER_ADMIN_ID
+
+def add_admin_to_db(user_id, added_by):
+    """添加管理员到数据库"""
+    connection = get_db_connection()
+    if connection is None:
+        return False
+        
+    try:
+        cursor = connection.cursor()
+        # 先确保用户存在
+        cursor.execute("SELECT COUNT(*) FROM users WHERE user_id = %s", (user_id,))
+        if cursor.fetchone()[0] == 0:
+            return False
+            
+        cursor.execute("""
+            INSERT INTO admins (user_id, added_by)
+            VALUES (%s, %s)
+            ON DUPLICATE KEY UPDATE added_by = %s, added_at = CURRENT_TIMESTAMP
+        """, (user_id, added_by, added_by))
+        return True
+        
+    except Error as e:
+        logging.error(f"添加管理员错误: {e}")
+        return False
+    finally:
+        if connection.is_connected():
+            cursor.close()
+            connection.close()
+
+def remove_admin_from_db(user_id):
+    """从数据库中移除管理员"""
+    connection = get_db_connection()
+    if connection is None:
+        return False
+        
+    try:
+        cursor = connection.cursor()
+        cursor.execute("DELETE FROM admins WHERE user_id = %s", (user_id,))
+        return cursor.rowcount > 0
+        
+    except Error as e:
+        logging.error(f"移除管理员错误: {e}")
+        return False
+    finally:
+        if connection.is_connected():
+            cursor.close()
+            connection.close()
+
+def get_admin_list():
+    """获取所有管理员列表"""
+    admins = []
+    
+    # 添加配置文件中的管理员
+    for admin_id in ADMIN_IDS:
+        admins.append({
+            'user_id': admin_id,
+            'source': 'config',
+            'added_by': None,
+            'added_at': None
+        })
+    
+    # 添加数据库中的管理员
+    connection = get_db_connection()
+    if connection is None:
+        return admins
+        
+    try:
+        cursor = connection.cursor(dictionary=True)
+        cursor.execute("""
+            SELECT a.user_id, a.added_by, a.added_at, u.username, u.first_name
+            FROM admins a
+            LEFT JOIN users u ON a.user_id = u.user_id
+        """)
+        db_admins = cursor.fetchall()
+        
+        for admin in db_admins:
+            admin['source'] = 'database'
+            admins.append(admin)
+            
+        return admins
+        
+    except Error as e:
+        logging.error(f"获取管理员列表错误: {e}")
+        return admins
+    finally:
+        if connection.is_connected():
+            cursor.close()
+            connection.close()
     
     @staticmethod
     def can_sign_in_today(user_id):
@@ -489,20 +636,188 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # 管理员加积分命令
 async def add_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    # 检查管理员权限
+    if not is_admin(user_id):
+        await update.message.reply_text("❌ 您没有权限执行此操作。")
+        return
+    
     if not context.args or len(context.args) != 2:
         await update.message.reply_text("用法：/addpoints <user_id> <amount>")
         return
 
     try:
-        user_id = int(context.args[0])
+        target_user_id = int(context.args[0])
         amount = int(context.args[1])
         
-        if UserDatabase.add_points(user_id, amount):
-            await update.message.reply_text(f"✅ 已为用户 {user_id} 添加 {amount} 积分。")
+        if UserDatabase.add_points(target_user_id, amount):
+            await update.message.reply_text(f"✅ 已为用户 {target_user_id} 添加 {amount} 积分。")
         else:
             await update.message.reply_text("❌ 添加积分失败，请检查用户ID是否正确。")
     except ValueError:
         await update.message.reply_text("参数错误，请输入有效的用户ID和数量。")
+
+# 添加管理员命令
+async def add_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    # 只有超级管理员可以添加管理员
+    if not is_super_admin(user_id):
+        await update.message.reply_text("❌ 只有超级管理员可以添加管理员。")
+        return
+    
+    if not context.args or len(context.args) != 1:
+        await update.message.reply_text("用法：/addadmin <user_id>")
+        return
+
+    try:
+        target_user_id = int(context.args[0])
+        
+        if target_user_id in ADMIN_IDS:
+            await update.message.reply_text("❌ 该用户已经是配置文件中的管理员。")
+            return
+        
+        if add_admin_to_db(target_user_id, user_id):
+            await update.message.reply_text(f"✅ 已将用户 {target_user_id} 添加为管理员。")
+        else:
+            await update.message.reply_text("❌ 添加管理员失败，请确保用户ID存在。")
+    except ValueError:
+        await update.message.reply_text("参数错误，请输入有效的用户ID。")
+
+# 移除管理员命令
+async def remove_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    # 只有超级管理员可以移除管理员
+    if not is_super_admin(user_id):
+        await update.message.reply_text("❌ 只有超级管理员可以移除管理员。")
+        return
+    
+    if not context.args or len(context.args) != 1:
+        await update.message.reply_text("用法：/removeadmin <user_id>")
+        return
+
+    try:
+        target_user_id = int(context.args[0])
+        
+        if target_user_id == SUPER_ADMIN_ID:
+            await update.message.reply_text("❌ 不能移除超级管理员。")
+            return
+        
+        if target_user_id in ADMIN_IDS:
+            await update.message.reply_text("❌ 不能移除配置文件中的管理员，请修改配置文件。")
+            return
+        
+        if remove_admin_from_db(target_user_id):
+            await update.message.reply_text(f"✅ 已将用户 {target_user_id} 从管理员列表中移除。")
+        else:
+            await update.message.reply_text("❌ 移除管理员失败，该用户可能不是管理员。")
+    except ValueError:
+        await update.message.reply_text("参数错误，请输入有效的用户ID。")
+
+# 管理员列表命令
+async def list_admins(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    # 只有管理员可以查看管理员列表
+    if not is_admin(user_id):
+        await update.message.reply_text("❌ 您没有权限执行此操作。")
+        return
+    
+    admins = get_admin_list()
+    
+    if not admins:
+        await update.message.reply_text("暂无管理员数据。")
+        return
+    
+    message = "👥 管理员列表：\n\n"
+    
+    for admin in admins:
+        admin_id = admin['user_id']
+        source = admin['source']
+        
+        # 标记超级管理员
+        if admin_id == SUPER_ADMIN_ID:
+            role = "👑 超级管理员"
+        else:
+            role = "👤 管理员"
+        
+        # 获取用户信息
+        if source == 'database':
+            username = admin.get('username')
+            first_name = admin.get('first_name', '未知用户')
+            name = f"@{username}" if username else first_name
+            added_at = admin.get('added_at', '').strftime('%Y-%m-%d') if admin.get('added_at') else '未知'
+            message += f"{role} - {name} (ID: {admin_id})\n"
+            message += f"   来源: {'数据库' if source == 'database' else '配置文件'}\n"
+            if source == 'database':
+                message += f"   添加时间: {added_at}\n"
+        else:
+            message += f"{role} - ID: {admin_id}\n"
+            message += f"   来源: 配置文件\n"
+        
+        message += "\n"
+    
+    await update.message.reply_text(message)
+
+# 确认购买订单命令（管理员专用）
+async def confirm_purchase(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    # 检查管理员权限
+    if not is_admin(user_id):
+        await update.message.reply_text("❌ 您没有权限执行此操作。")
+        return
+    
+    if not context.args or len(context.args) != 1:
+        await update.message.reply_text("用法：/confirm <order_id>")
+        return
+
+    try:
+        order_id = int(context.args[0])
+        
+        connection = get_db_connection()
+        if connection is None:
+            await update.message.reply_text("❌ 数据库连接失败。")
+            return
+        
+        cursor = connection.cursor(dictionary=True)
+        
+        # 获取订单信息
+        cursor.execute("""
+            SELECT * FROM purchase_records 
+            WHERE id = %s AND status = 'pending'
+        """, (order_id,))
+        order = cursor.fetchone()
+        
+        if not order:
+            await update.message.reply_text("❌ 未找到待确认的订单。")
+            return
+        
+        # 更新订单状态
+        cursor.execute("""
+            UPDATE purchase_records 
+            SET status = 'completed' 
+            WHERE id = %s
+        """, (order_id,))
+        
+        # 给用户添加积分
+        if UserDatabase.add_points(order['user_id'], order['points_amount']):
+            await update.message.reply_text(
+                f"✅ 订单 {order_id} 确认成功！\n"
+                f"用户 {order['user_id']} 已获得 {order['points_amount']} 积分。"
+            )
+        else:
+            await update.message.reply_text("❌ 确认订单失败。")
+            
+        connection.close()
+        
+    except ValueError:
+        await update.message.reply_text("参数错误，请输入有效的订单ID。")
+    except Error as e:
+        logging.error(f"确认购买订单错误: {e}")
+        await update.message.reply_text("❌ 确认订单时发生错误。")
 
 # 帮助命令
 async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
