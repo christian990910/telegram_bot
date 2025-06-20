@@ -132,6 +132,7 @@ def init_database():
             connection.close()
 
 # 用户数据操作类
+# 用户数据操作类
 class UserDatabase:
     @staticmethod
     def get_or_create_user(user_id, username=None, first_name=None):
@@ -216,6 +217,110 @@ class UserDatabase:
             
         except Error as e:
             logging.error(f"添加积分错误: {e}")
+            return False
+        finally:
+            if connection.is_connected():
+                cursor.close()
+                connection.close()
+
+    @staticmethod
+    def can_sign_in_today(user_id):
+        connection = get_db_connection()
+        if connection is None:
+            return True
+            
+        try:
+            cursor = connection.cursor()
+            today = date.today()
+            cursor.execute("""
+                SELECT COUNT(*) FROM sign_in_records 
+                WHERE user_id = %s AND sign_in_date = %s
+            """, (user_id, today))
+            result = cursor.fetchone()
+            return result[0] == 0
+            
+        except Error as e:
+            logging.error(f"检查签到状态错误: {e}")
+            return True
+        finally:
+            if connection.is_connected():
+                cursor.close()
+                connection.close()
+    
+    @staticmethod
+    def record_sign_in(user_id, points_earned=10):
+        connection = get_db_connection()
+        if connection is None:
+            return False
+            
+        try:
+            cursor = connection.cursor()
+            today = date.today()
+            
+            # 记录签到
+            cursor.execute("""
+                INSERT INTO sign_in_records (user_id, sign_in_date, points_earned)
+                VALUES (%s, %s, %s)
+            """, (user_id, today, points_earned))
+            
+            # 更新用户积分和最后签到日期
+            cursor.execute("""
+                UPDATE users 
+                SET points = points + %s, last_sign_in = %s, updated_at = CURRENT_TIMESTAMP
+                WHERE user_id = %s
+            """, (points_earned, today, user_id))
+            
+            return True
+            
+        except Error as e:
+            logging.error(f"记录签到错误: {e}")
+            return False
+        finally:
+            if connection.is_connected():
+                cursor.close()
+                connection.close()
+    
+    @staticmethod
+    def get_leaderboard(limit=10):
+        connection = get_db_connection()
+        if connection is None:
+            return []
+            
+        try:
+            cursor = connection.cursor(dictionary=True)
+            cursor.execute("""
+                SELECT user_id, username, first_name, points
+                FROM users 
+                WHERE points > 0
+                ORDER BY points DESC, updated_at ASC
+                LIMIT %s
+            """, (limit,))
+            return cursor.fetchall()
+            
+        except Error as e:
+            logging.error(f"获取排行榜错误: {e}")
+            return []
+        finally:
+            if connection.is_connected():
+                cursor.close()
+                connection.close()
+    
+    @staticmethod
+    def record_purchase(user_id, points_amount, usdt_amount):
+        connection = get_db_connection()
+        if connection is None:
+            return False
+            
+        try:
+            cursor = connection.cursor()
+            cursor.execute("""
+                INSERT INTO purchase_records (user_id, points_amount, usdt_amount)
+                VALUES (%s, %s, %s)
+            """, (user_id, points_amount, usdt_amount))
+            return cursor.lastrowid
+            
+        except Error as e:
+            logging.error(f"记录购买错误: {e}")
             return False
         finally:
             if connection.is_connected():
@@ -340,109 +445,6 @@ def get_admin_list():
             cursor.close()
             connection.close()
     
-    @staticmethod
-    def can_sign_in_today(user_id):
-        connection = get_db_connection()
-        if connection is None:
-            return True
-            
-        try:
-            cursor = connection.cursor()
-            today = date.today()
-            cursor.execute("""
-                SELECT COUNT(*) FROM sign_in_records 
-                WHERE user_id = %s AND sign_in_date = %s
-            """, (user_id, today))
-            result = cursor.fetchone()
-            return result[0] == 0
-            
-        except Error as e:
-            logging.error(f"检查签到状态错误: {e}")
-            return True
-        finally:
-            if connection.is_connected():
-                cursor.close()
-                connection.close()
-    
-    @staticmethod
-    def record_sign_in(user_id, points_earned=10):
-        connection = get_db_connection()
-        if connection is None:
-            return False
-            
-        try:
-            cursor = connection.cursor()
-            today = date.today()
-            
-            # 记录签到
-            cursor.execute("""
-                INSERT INTO sign_in_records (user_id, sign_in_date, points_earned)
-                VALUES (%s, %s, %s)
-            """, (user_id, today, points_earned))
-            
-            # 更新用户积分和最后签到日期
-            cursor.execute("""
-                UPDATE users 
-                SET points = points + %s, last_sign_in = %s, updated_at = CURRENT_TIMESTAMP
-                WHERE user_id = %s
-            """, (points_earned, today, user_id))
-            
-            return True
-            
-        except Error as e:
-            logging.error(f"记录签到错误: {e}")
-            return False
-        finally:
-            if connection.is_connected():
-                cursor.close()
-                connection.close()
-    
-    @staticmethod
-    def get_leaderboard(limit=10):
-        connection = get_db_connection()
-        if connection is None:
-            return []
-            
-        try:
-            cursor = connection.cursor(dictionary=True)
-            cursor.execute("""
-                SELECT user_id, username, first_name, points
-                FROM users 
-                WHERE points > 0
-                ORDER BY points DESC, updated_at ASC
-                LIMIT %s
-            """, (limit,))
-            return cursor.fetchall()
-            
-        except Error as e:
-            logging.error(f"获取排行榜错误: {e}")
-            return []
-        finally:
-            if connection.is_connected():
-                cursor.close()
-                connection.close()
-    
-    @staticmethod
-    def record_purchase(user_id, points_amount, usdt_amount):
-        connection = get_db_connection()
-        if connection is None:
-            return False
-            
-        try:
-            cursor = connection.cursor()
-            cursor.execute("""
-                INSERT INTO purchase_records (user_id, points_amount, usdt_amount)
-                VALUES (%s, %s, %s)
-            """, (user_id, points_amount, usdt_amount))
-            return cursor.lastrowid
-            
-        except Error as e:
-            logging.error(f"记录购买错误: {e}")
-            return False
-        finally:
-            if connection.is_connected():
-                cursor.close()
-                connection.close()
 
 # 生成四位数验证码
 def generate_code():
