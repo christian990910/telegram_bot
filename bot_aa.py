@@ -11,6 +11,7 @@ import aiohttp
 import time
 import random
 from typing import Dict, List, Optional
+import atexit
 
 
 # 初始化日志
@@ -140,7 +141,7 @@ def init_database():
             cursor.close()
             connection.close()
 
-# 用户数据操作类
+
 # 用户数据操作类
 class UserDatabase:
     @staticmethod
@@ -829,6 +830,7 @@ async def clean_expired_orders(context: ContextTypes.DEFAULT_TYPE):
 
 # 修改后的购买确认处理函数
 async def handle_purchase_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """处理购买确认 - 集成USDT自动检测"""
     text = update.message.text.strip()
     if text == "确认":
         user_id = update.effective_user.id
@@ -836,9 +838,12 @@ async def handle_purchase_confirmation(update: Update, context: ContextTypes.DEF
         price = amount * 0.1
         
         # 生成带随机小额的订单金额
+        from usdt_detector import generate_order_amount_with_random, pending_orders, start_usdt_detection
+        from datetime import datetime
+        
         amount_with_random = generate_order_amount_with_random(price)
         
-        # 记录购买订单
+        # 记录购买订单（使用你现有的UserDatabase）
         order_id = UserDatabase.record_purchase(user_id, amount, price)
         
         # 添加到待处理订单列表
@@ -859,13 +864,13 @@ async def handle_purchase_confirmation(update: Update, context: ContextTypes.DEF
             f"积分数量：{amount}\n"
             f"支付金额：{amount_with_random:.2f} USDT\n\n"
             f"💰 请将准确金额 {amount_with_random:.2f} USDT 发送到以下地址：\n\n"
-            f"`{USDT_ADDRESS}`\n\n"
+            f"`{USDT_ADDRESS}`\n\n"  # 这个地址需要在usdt_detector.py中配置
             f"⚠️ 重要提醒：\n"
             f"• 请发送准确金额 {amount_with_random:.2f} USDT\n"
             f"• 系统将自动检测并确认付款\n"
-            f"• 订单有效期：{ORDER_TIMEOUT_MINUTES}分钟\n"
+            f"• 订单有效期：30分钟\n"
             f"• 超时订单将自动作废\n\n"
-            f"🔄 正在监控付款中...",
+            f"🔄 正在监控付款中...\n",
             parse_mode='Markdown'
         )
     elif text == "取消":
@@ -1120,7 +1125,8 @@ async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /addpoints <user_id> <amount> - 为指定用户添加积分
 """)
 
-# 主函数
+
+# 主函数 - 修改后的版本
 def main():
     # 初始化数据库
     if not init_database():
@@ -1139,7 +1145,7 @@ def main():
         states={
             AWAIT_CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, verify_code)],
             AWAIT_PURCHASE_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_purchase_amount)],
-            AWAIT_CONFIRM_PURCHASE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_purchase_confirmation)],
+            AWAIT_CONFIRM_PURCHASE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_purchase_confirmation)],  # 这个函数需要替换
         },
         fallbacks=[
             CommandHandler("cancel", cancel),
@@ -1154,11 +1160,17 @@ def main():
     app.add_handler(CommandHandler("check_rank", check_rank))
     app.add_handler(CommandHandler("addpoints", add_points))
 
+    # 🔥 新增：添加USDT检测相关的处理器
+    app.add_handler(CommandHandler("order_status", check_order_status))
 
     # 设置菜单按钮
     app.job_queue.run_once(set_menu_button, 1)
 
+    # 🔥 新增：注册清理函数
+    atexit.register(lambda: asyncio.run(cleanup_usdt_detector()))
+
     print("✅ Bot 正在运行...")
+    print("🔄 USDT自动检测已启用...")
     app.run_polling()
 
 if __name__ == '__main__':
